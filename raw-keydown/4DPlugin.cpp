@@ -25,17 +25,45 @@ namespace Keyboard
 	process_number_t monitorProcessId = 0;
 	process_number_t userProcessId = 0;
 	
+	#if VERSIONWIN
+	typedef UINT UInt32;
+	#endif
 	std::vector<UInt32>keycodes;
 	std::vector<char>keychars;
 	
+	#if VERSIONMAC
 	EventTypeSpec	events[] =
 	{
 		{kEventClassKeyboard, kEventRawKeyDown}
 	};
+	#endif
 	
+	#if VERSIONMAC
 	EventHandlerRef	eventHandlerRef;
+	#endif
 	
-	static OSStatus myKeyboardEventHander(EventHandlerCallRef inCaller,
+	#if VERSIONWIN
+	HHOOK eventHandlerRef;
+	#endif
+	
+	#if VERSIONWIN
+	LRESULT CALLBACK myKeyboardEventHander(int code, WPARAM wParam, LPARAM lParam)
+	{
+		KBDLLHOOKSTRUCT *pkh = (KBDLLHOOKSTRUCT *)lParam;
+		
+		if(wParam == WM_KEYDOWN)
+		{
+			UInt32 keyCode = pkh->vkCode;
+			char keyChar = MapVirtualKey(pkh->vkCode, 2);
+			keycodes.push_back(keyCode);
+			keychars.push_back(keyChar);
+		}
+		return CallNextHookEx(eventHandlerRef, code, wParam, lParam);
+	}
+	#endif
+	
+	#if VERSIONMAC
+	OSStatus myKeyboardEventHander(EventHandlerCallRef inCaller,
 																				EventRef inEvent,
 																				void *inUserData)
 	{
@@ -67,11 +95,13 @@ namespace Keyboard
 		
 		return eventNotHandledErr;
 	}
+	#endif
 	
 	void startMonitoring()
 	{
 		if(!isMonitoring)
 		{
+		#if VERSIONMAC
 			EventHandlerUPP eventHandlerUpp = NewEventHandlerUPP(myKeyboardEventHander);
 			
 			if(noErr == InstallEventHandler(GetApplicationEventTarget(),
@@ -80,6 +110,11 @@ namespace Keyboard
 																			events, 0, &eventHandlerRef)) isMonitoring = true;
 			
 			DisposeEventHandlerUPP(eventHandlerUpp);
+		#endif
+		#if VERSIONWIN
+			eventHandlerRef = SetWindowsHookEx(WH_KEYBOARD_LL, (HOOKPROC)myKeyboardEventHander, (HINSTANCE)GetModuleHandle(0), 0);
+			if(eventHandlerRef) isMonitoring = true;
+		#endif
 		}
 		
 		if(isMonitoring)
@@ -95,7 +130,12 @@ namespace Keyboard
 	{
 		if(isMonitoring)
 		{
+			#if VERSIONMAC
 			RemoveEventHandler(eventHandlerRef);
+			#endif
+			#if VERSIONWIN
+			UnhookWindowsHookEx(eventHandlerRef);
+			#endif
 			isMonitoring = false;
 		}
 		if(monitorProcessId)
@@ -289,6 +329,7 @@ void CommandDispatcher (PA_long32 pProcNum, sLONG_PTR *pResult, PackagePtr pPara
 
 // ----------------------------------- Keyboard -----------------------------------
 
+#pragma mark -
 
 void ON_RAW_KEYDOWN_CALL(sLONG_PTR *pResult, PackagePtr pParams)
 {
