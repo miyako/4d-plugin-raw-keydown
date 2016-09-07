@@ -29,7 +29,7 @@ namespace Keyboard
 	typedef UINT UInt32;
 	#endif
 	std::vector<UInt32>keycodes;
-	std::vector<char>keychars;
+	std::vector<UInt32>keychars;
 	
 	#if VERSIONMAC
 	EventTypeSpec	events[] =
@@ -54,9 +54,12 @@ namespace Keyboard
 		if(wParam == WM_KEYDOWN)
 		{
 			UInt32 keyCode = pkh->vkCode;
-			char keyChar = MapVirtualKey(pkh->vkCode, 2);
+			UInt32 keyChar = MapVirtualKey(pkh->vkCode, 2);
 			keycodes.push_back(keyCode);
 			keychars.push_back(keyChar);
+
+			if(monitorProcessId)
+				PA_UnfreezeProcess(monitorProcessId);
 		}
 		return CallNextHookEx(eventHandlerRef, code, wParam, lParam);
 	}
@@ -85,13 +88,13 @@ namespace Keyboard
 						keycodes.push_back(keyCode);
 						keychars.push_back(keyChar);
 						
-						NSLog(@"%u,%u", (unsigned int)keyCode, keyChar);
+//						NSLog(@"%u,%u", (unsigned int)keyCode, keyChar);
+						
+						if(monitorProcessId)
+							PA_UnfreezeProcess(monitorProcessId);
 					}
 				}
 			}
-		
-		if(monitorProcessId)
-			PA_UnfreezeProcess(monitorProcessId);
 		
 		return eventNotHandledErr;
 	}
@@ -158,10 +161,10 @@ namespace Keyboard
 	void callMethod()
 	{
 		std::vector<UInt32>::iterator a = keycodes.begin();
-		std::vector<char>::iterator b = keychars.begin();
+		std::vector<UInt32>::iterator b = keychars.begin();
 		
 		UInt32 keycode = *a;
-		char keychar = *b;
+		UInt32 keychar = *b;
 	
 		if(methodId)
 		{
@@ -169,8 +172,8 @@ namespace Keyboard
 			params[0] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[0], keycode);
 			
-			char buf[2];
-			buf[0] = keychar;
+			uint8_t buf[2];
+			buf[0] = (uint8_t)keychar;
 			buf[1] = 0;
 			C_TEXT u;
 			u.setUTF8String((const uint8_t *)buf, 1);
