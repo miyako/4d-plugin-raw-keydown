@@ -37,13 +37,13 @@ C_LONGINT($1;$code)
 C_TEXT($2;$char)
 C_LONGINT($3;$info)
 
-$1:=$code  //physical position 
-$2:=$char  //ascii
-$3:=$userInfo  //$2 of ON RAW KEYDOWN CALL
+$code:=$1  //physical position 
+$char:=$2  //ascii
+$info:=$3  //$2 of ON RAW KEYDOWN CALL
 
 C_TEXT(<>KEY)
 
-If ($code=48) | ($code=36) | ($code=76)  //tab, return, enter
+If ($char="\r") | ($char="\n") | ($char="\t")
 
 CALL PROCESS($info)
 
