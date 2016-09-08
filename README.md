@@ -7,6 +7,11 @@ Directly capture raw keydown events; written for USB-HID barcode scanner input
 |:------:|:-----:|:---------:|:---------:|
 |🆗|🆗|🆗|🆗|
 
+###New!
+---
+
+Added an option to filter keystrokes.
+
 ##Example
 
 ```
