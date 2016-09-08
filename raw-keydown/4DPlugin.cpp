@@ -25,6 +25,8 @@ namespace Keyboard
 	process_number_t monitorProcessId = 0;
 	process_number_t userProcessId = 0;
 	
+	BOOL shouldFilterEvent = 0;
+	
 	#if VERSIONWIN
 	typedef UINT UInt32;
 	#endif
@@ -60,6 +62,8 @@ namespace Keyboard
 
 			if(monitorProcessId)
 				PA_UnfreezeProcess(monitorProcessId);
+			
+			return shouldFilterEvent ? CallNextHookEx(eventHandlerRef, code, wParam, lParam) : TRUE;
 		}
 		return CallNextHookEx(eventHandlerRef, code, wParam, lParam);
 	}
@@ -88,10 +92,10 @@ namespace Keyboard
 						keycodes.push_back(keyCode);
 						keychars.push_back(keyChar);
 						
-//						NSLog(@"%u,%u", (unsigned int)keyCode, keyChar);
-						
 						if(monitorProcessId)
 							PA_UnfreezeProcess(monitorProcessId);
+						
+						return shouldFilterEvent ? eventNotHandledErr : noErr;
 					}
 				}
 			}
@@ -193,7 +197,7 @@ namespace Keyboard
 			PA_ClearVariable(&params[1]);
 			PA_ClearVariable(&params[2]);
 		}
-/*		else if(methodName.getUTF16Length())
+		else if(methodName.getUTF16Length())
 		{
 			PA_Variable	params[5];
 			params[0] = PA_CreateVariable(eVK_Unistring);
@@ -223,10 +227,11 @@ namespace Keyboard
 			PA_ExecuteCommandByID(1007, params, 5);
 			
 			PA_ClearVariable(&params[0]);
-			PA_ClearVariable(&params[1]);
+			//params[1] is an operation varaible
+			PA_ClearVariable(&params[2]);
 			PA_ClearVariable(&params[3]);
 			PA_ClearVariable(&params[4]);
-		} */
+		}
 		else
 		{
 			keycodes.clear();
@@ -338,13 +343,17 @@ void ON_RAW_KEYDOWN_CALL(sLONG_PTR *pResult, PackagePtr pParams)
 {
 	C_TEXT Param1;
 	C_LONGINT Param2;
+	C_LONGINT Param3;
 	
 	Param1.fromParamAtIndex(pParams, 1);
 	Param2.fromParamAtIndex(pParams, 2);
+	Param3.fromParamAtIndex(pParams, 3);
 	
 	Keyboard::methodName.setUTF16String(Param1.getUTF16StringPtr(), Param1.getUTF16Length());
 	Keyboard::methodId = PA_GetMethodID((PA_Unichar *)Param1.getUTF16StringPtr());
 	Keyboard::userProcessId = Param2.getIntValue();
+	
+	Keyboard::shouldFilterEvent = Param3.getIntValue();
 	
 	if(Param1.getUTF16Length())
 	{

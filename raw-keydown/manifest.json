@@ -1,1 +1,1 @@
-﻿{"name":"Keyboard Events","id":20000,"commands":[{"theme":"Keyboard","syntax":"ON RAW KEYDOWN CALL(&T;&L)"}]}
+﻿{"name":"Keyboard Events","id":20000,"commands":[{"theme":"Keyboard","syntax":"ON RAW KEYDOWN CALL(&T;&L;&L)"}]}
