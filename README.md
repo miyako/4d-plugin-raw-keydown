@@ -7,7 +7,7 @@ Directly capture raw keydown events; written for USB-HID barcode scanner input
 |:------:|:-----:|:---------:|:---------:|
 |🆗|🆗|🆗|🆗|
 
-###New!
+New!
 ---
 
 Added an option to filter keystrokes.
@@ -20,7 +20,7 @@ $event:=Form event
 Case of 
 : ($event=On Load)
 
-ON RAW KEYDOWN CALL ("CB";Current process)
+ON RAW KEYDOWN CALL ("CB";Current process;KE Filter keystroke)
 
 : ($event=On Unload)
 
