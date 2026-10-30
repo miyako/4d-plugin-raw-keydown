@@ -6,176 +6,258 @@
  #	author : miyako
  #	2016/09/05
  #
+ #	review fixes applied (source-level, not compile-tested):
+ #	 - callMethod: by-name fallback used an uninitialised PA_Variable and
+ #	   overwrote the '*' operation variable
+ #	 - stopMonitoring: bounded wait, self-call safe, no PA_UnfreezeProcess(0)
+ #	 - Windows hook: honour code < 0 contract, no exceptions across the callback
+ #	 - queue: copy-then-pop, capped, deque
+ #	 - macOS: char sign-extension, UPP disposed after RemoveEventHandler
+ #	 - UTF-16 literals via u"..." instead of interleaved-NUL narrow literals
+ #
  # --------------------------------------------------------------------------------*/
 
 
 #include "4DPluginAPI.h"
 #include "4DPlugin.h"
 
+#include <deque>
+#include <chrono>
+
 namespace Keyboard
 {
 	C_TEXT methodName;
 	method_id_t methodId = 0;
-	
+
 	BOOL isMonitoring = false;
 	BOOL shouldKillListenerLoop = false;
-	
-	process_name_t MONITOR_PROCESS_NAME = (PA_Unichar *)"$\0K\0E\0Y\0D\0O\0W\0N\0\0\0";
+
+	process_name_t MONITOR_PROCESS_NAME = const_cast<PA_Unichar *>(reinterpret_cast<const PA_Unichar *>(u"$KEYDOWN"));
 	process_stack_size_t MONITOR_PROCESS_STACK_SIZE = 0;
 	process_number_t monitorProcessId = 0;
 	process_number_t userProcessId = 0;
-	
+
 	BOOL shouldFilterEvent = 0;
-	
+
+	//keystrokes queued but not yet delivered; further keystrokes are dropped beyond this
+	const size_t MAX_QUEUED_KEYS = 1024;
+	//how long stopMonitoring waits for the listener process to exit
+	const int STOP_TIMEOUT_SECONDS = 5;
+
 	#if VERSIONWIN
 	typedef UINT UInt32;
 	#endif
-	std::vector<UInt32>keycodes;
-	std::vector<UInt32>keychars;
-	
+	std::deque<UInt32>keycodes;
+	std::deque<UInt32>keychars;
+
+	void enqueue(UInt32 code, UInt32 chr)
+	{
+		if(keycodes.size() < MAX_QUEUED_KEYS)
+		{
+			keycodes.push_back(code);
+			keychars.push_back(chr);
+		}
+	}
+
 	#if VERSIONMAC
 	EventTypeSpec	events[] =
 	{
 		{kEventClassKeyboard, kEventRawKeyDown}
 	};
 	#endif
-	
+
 	#if VERSIONMAC
 	EventHandlerRef	eventHandlerRef;
+	EventHandlerUPP eventHandlerUpp = NULL;
 	#endif
-	
+
 	#if VERSIONWIN
 	HHOOK eventHandlerRef;
 	#endif
-	
+
 	#if VERSIONWIN
 	LRESULT CALLBACK myKeyboardEventHander(int code, WPARAM wParam, LPARAM lParam)
 	{
-		KBDLLHOOKSTRUCT *pkh = (KBDLLHOOKSTRUCT *)lParam;
-		
+		//documented contract: below zero, pass on without processing
+		if(code < 0)
+			return CallNextHookEx(eventHandlerRef, code, wParam, lParam);
+
 		if(wParam == WM_KEYDOWN)
 		{
-			UInt32 keyCode = pkh->vkCode;
-			UInt32 keyChar = MapVirtualKey(pkh->vkCode, 2);
-			keycodes.push_back(keyCode);
-			keychars.push_back(keyChar);
+			try
+			{
+				KBDLLHOOKSTRUCT *pkh = (KBDLLHOOKSTRUCT *)lParam;
+				UInt32 keyCode = pkh->vkCode;
+				UInt32 keyChar = MapVirtualKey(pkh->vkCode, 2);
+				enqueue(keyCode, keyChar);
 
-			if(monitorProcessId)
-				PA_UnfreezeProcess(monitorProcessId);
-			
+				process_number_t pid = monitorProcessId;
+				if(pid)
+					PA_UnfreezeProcess(pid);
+			}
+			catch(...)
+			{
+				//never let an exception cross the OS callback boundary
+			}
+
 			return shouldFilterEvent ? CallNextHookEx(eventHandlerRef, code, wParam, lParam) : TRUE;
 		}
 		return CallNextHookEx(eventHandlerRef, code, wParam, lParam);
 	}
 	#endif
-	
+
 	#if VERSIONMAC
 	OSStatus myKeyboardEventHander(EventHandlerCallRef inCaller,
 																				EventRef inEvent,
 																				void *inUserData)
 	{
-
-		if(GetEventClass(inEvent) == kEventClassKeyboard)
-			if(GetEventKind(inEvent) == kEventRawKeyDown)
-			{
-				UInt32 keyCode;
-				char keyChar;
-				
-				if(noErr == GetEventParameter(inEvent, kEventParamKeyCode, typeUInt32,
-																			NULL, sizeof(UInt32),
-																			NULL, &keyCode))
+		try
+		{
+			if(GetEventClass(inEvent) == kEventClassKeyboard)
+				if(GetEventKind(inEvent) == kEventRawKeyDown)
 				{
-					if(noErr == GetEventParameter(inEvent, kEventParamKeyMacCharCodes, typeChar,
-																				NULL, sizeof(char),
-																				NULL, &keyChar))
+					UInt32 keyCode;
+					char keyChar;
+
+					if(noErr == GetEventParameter(inEvent, kEventParamKeyCode, typeUInt32,
+																				NULL, sizeof(UInt32),
+																				NULL, &keyCode))
 					{
-						keycodes.push_back(keyCode);
-						keychars.push_back(keyChar);
-						
-						if(monitorProcessId)
-							PA_UnfreezeProcess(monitorProcessId);
-						
-						return shouldFilterEvent ? eventNotHandledErr : noErr;
+						if(noErr == GetEventParameter(inEvent, kEventParamKeyMacCharCodes, typeChar,
+																					NULL, sizeof(char),
+																					NULL, &keyChar))
+						{
+							//avoid sign extension of bytes >= 0x80
+							enqueue(keyCode, (UInt32)(unsigned char)keyChar);
+
+							process_number_t pid = monitorProcessId;
+							if(pid)
+								PA_UnfreezeProcess(pid);
+
+							return shouldFilterEvent ? eventNotHandledErr : noErr;
+						}
 					}
 				}
-			}
-		
+		}
+		catch(...)
+		{
+			//never let an exception cross the OS callback boundary
+		}
+
 		return eventNotHandledErr;
 	}
 	#endif
-	
+
 	void startMonitoring()
 	{
 		if(!isMonitoring)
 		{
 		#if VERSIONMAC
-			EventHandlerUPP eventHandlerUpp = NewEventHandlerUPP(myKeyboardEventHander);
-			
+			eventHandlerUpp = NewEventHandlerUPP(myKeyboardEventHander);
+
 			if(noErr == InstallEventHandler(GetApplicationEventTarget(),
 													eventHandlerUpp,
 													GetEventTypeCount(events),
-																			events, 0, &eventHandlerRef)) isMonitoring = true;
-			
-			DisposeEventHandlerUPP(eventHandlerUpp);
+																			events, 0, &eventHandlerRef))
+			{
+				isMonitoring = true;
+			}else{
+				DisposeEventHandlerUPP(eventHandlerUpp);
+				eventHandlerUpp = NULL;
+			}
 		#endif
 		#if VERSIONWIN
-			eventHandlerRef = SetWindowsHookEx(WH_KEYBOARD_LL, (HOOKPROC)myKeyboardEventHander, (HINSTANCE)GetModuleHandle(0), 0);
+			eventHandlerRef = SetWindowsHookEx(WH_KEYBOARD_LL, myKeyboardEventHander, (HINSTANCE)GetModuleHandle(0), 0);
 			if(eventHandlerRef) isMonitoring = true;
 		#endif
 		}
-		
+
 		if(isMonitoring)
 		{
 			if(!monitorProcessId)
 			{
 				monitorProcessId = PA_NewProcess((void *)listenerLoop, MONITOR_PROCESS_STACK_SIZE, MONITOR_PROCESS_NAME);
+			}else{
+				//a stop requested from inside the callback has not completed yet: cancel it
+				shouldKillListenerLoop = false;
 			}
 		}
 	}
-	
+
 	void stopMonitoring()
 	{
 		if(isMonitoring)
 		{
 			#if VERSIONMAC
 			RemoveEventHandler(eventHandlerRef);
+			if(eventHandlerUpp)
+			{
+				DisposeEventHandlerUPP(eventHandlerUpp);
+				eventHandlerUpp = NULL;
+			}
 			#endif
 			#if VERSIONWIN
 			UnhookWindowsHookEx(eventHandlerRef);
 			#endif
 			isMonitoring = false;
 		}
+
 		if(monitorProcessId)
 		{
 			shouldKillListenerLoop = true;
+
+			//called from the callback method (which runs in the listener process itself):
+			//waiting would wait for ourselves; the loop exits when the callback returns
+			if(PA_GetCurrentProcessNumber() == monitorProcessId)
+				return;
+
+			std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+
 			while(monitorProcessId)
 			{
 				PA_YieldAbsolute();
-				PA_UnfreezeProcess(monitorProcessId);
+
+				process_number_t pid = monitorProcessId;//re-read: listener may have exited while we yielded
+				if(pid)
+					PA_UnfreezeProcess(pid);
+
+				if(std::chrono::steady_clock::now() - start > std::chrono::seconds(STOP_TIMEOUT_SECONDS))
+				{
+					//listener never finished (aborted from outside?): do not hang, and
+					//do not keep waking a process number that 4D may have reused
+					monitorProcessId = 0;
+					break;
+				}
 			}
 		}
 	}
-	
+
 	void init()
 	{
 		keycodes.clear();
 		keychars.clear();
 	}
-	
+
 	void callMethod()
 	{
-		std::vector<UInt32>::iterator a = keycodes.begin();
-		std::vector<UInt32>::iterator b = keychars.begin();
-		
-		UInt32 keycode = *a;
-		UInt32 keychar = *b;
-	
+		if(keycodes.empty() || keychars.empty())
+		{
+			init();
+			return;
+		}
+
+		//take a copy and pop immediately; nothing below holds an iterator
+		UInt32 keycode = keycodes.front();
+		UInt32 keychar = keychars.front();
+		keycodes.pop_front();
+		keychars.pop_front();
+
 		if(methodId)
 		{
 			PA_Variable	params[3];
 			params[0] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[0], keycode);
-			
+
 			uint8_t buf[2];
 			buf[0] = (uint8_t)keychar;
 			buf[1] = 0;
@@ -184,58 +266,52 @@ namespace Keyboard
 			params[1] = PA_CreateVariable(eVK_Unistring);
 			PA_Unistring keycharStr = PA_CreateUnistring((PA_Unichar *)u.getUTF16StringPtr());
 			PA_SetStringVariable(&params[1], &keycharStr);
-			
+
 			params[2] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[2], userProcessId);
-			
-			keycodes.erase(a);
-			keychars.erase(b);
-			
+
 			PA_ExecuteMethodByID(methodId, params, 3);
-			
+
 			PA_ClearVariable(&params[0]);
 			PA_ClearVariable(&params[1]);
 			PA_ClearVariable(&params[2]);
 		}
 		else if(methodName.getUTF16Length())
 		{
+			//EXECUTE METHOD ( methodName ; * ; $1 ; $2 ; $3 )
 			PA_Variable	params[5];
 			params[0] = PA_CreateVariable(eVK_Unistring);
 			PA_Unistring _methodName = PA_CreateUnistring((PA_Unichar *)methodName.getUTF16StringPtr());
 			PA_SetStringVariable(&params[0], &_methodName);
-			
+
 			PA_SetOperationVariable(&params[1], '*');
-			
+
 			params[2] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[2], keycode);
-			
-			char buf[2];
-			buf[0] = keychar;
+
+			uint8_t buf[2];
+			buf[0] = (uint8_t)keychar;
 			buf[1] = 0;
 			C_TEXT u;
 			u.setUTF8String((const uint8_t *)buf, 1);
-			params[1] = PA_CreateVariable(eVK_Unistring);
+			params[3] = PA_CreateVariable(eVK_Unistring);//was never created: uninitialised variable
 			PA_Unistring keycharStr = PA_CreateUnistring((PA_Unichar *)u.getUTF16StringPtr());
 			PA_SetStringVariable(&params[3], &keycharStr);
-			
+
 			params[4] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[4], userProcessId);
-			
-			keycodes.erase(a);
-			keychars.erase(b);
-			
+
 			PA_ExecuteCommandByID(1007, params, 5);
-			
+
 			PA_ClearVariable(&params[0]);
-			//params[1] is an operation varaible
+			//params[1] is an operation variable
 			PA_ClearVariable(&params[2]);
 			PA_ClearVariable(&params[3]);
 			PA_ClearVariable(&params[4]);
 		}
 		else
 		{
-			keycodes.clear();
-			keychars.clear();
+			init();
 		}
 	}
 }
@@ -246,28 +322,35 @@ void listenerLoop()
 {
 	Keyboard::shouldKillListenerLoop = false;
 	Keyboard::init();
-	
+
 	while(!Keyboard::shouldKillListenerLoop)
 	{
 		PA_YieldAbsolute();
 		while(Keyboard::keycodes.size())
 		{
 			PA_YieldAbsolute();
-			
-			Keyboard::callMethod();
-			
+
+			try
+			{
+				Keyboard::callMethod();//pops the entry before doing anything that can throw
+			}
+			catch(...)
+			{
+				//do not let an exception escape the process entry point
+			}
+
 			if(Keyboard::shouldKillListenerLoop)
 				break;
 		}
-		
+
 		if(!Keyboard::shouldKillListenerLoop)
 		{
 			PA_FreezeProcess(PA_GetCurrentProcessNumber());
 		}
 	}
-	
+
 	Keyboard::monitorProcessId = 0;
-	
+
 	PA_KillProcess();
 }
 
@@ -279,7 +362,7 @@ bool IsProcessOnExit()
 	PA_long32 state, time;
 	PA_GetProcessInfo(PA_GetCurrentProcessNumber(), name, &state, &time);
 	CUTF16String procName(name.getUTF16StringPtr());
-	CUTF16String exitProcName((PA_Unichar *)"$\0x\0x\0\0\0");
+	CUTF16String exitProcName(reinterpret_cast<const PA_Unichar *>(u"$xx"));
 	return (!procName.compare(exitProcName));
 }
 
@@ -306,11 +389,11 @@ void PluginMain(PA_long32 selector, PA_PluginParameters params)
 		sLONG_PTR *pResult = (sLONG_PTR *)params->fResult;
 		PackagePtr pParams = (PackagePtr)params->fParameters;
 
-		CommandDispatcher(pProcNum, pResult, pParams); 
+		CommandDispatcher(pProcNum, pResult, pParams);
 	}
 	catch(...)
 	{
-
+		//no return value is declared in manifest.json, so swallowing cannot leave 4D waiting
 	}
 }
 
@@ -322,7 +405,7 @@ void CommandDispatcher (PA_long32 pProcNum, sLONG_PTR *pResult, PackagePtr pPara
 		case kServerInitPlugin :
 			OnStartup();
 			break;
-			
+
 		case kCloseProcess :
 			OnCloseProcess();
 			break;
@@ -344,17 +427,17 @@ void ON_RAW_KEYDOWN_CALL(sLONG_PTR *pResult, PackagePtr pParams)
 	C_TEXT Param1;
 	C_LONGINT Param2;
 	C_LONGINT Param3;
-	
+
 	Param1.fromParamAtIndex(pParams, 1);
 	Param2.fromParamAtIndex(pParams, 2);
 	Param3.fromParamAtIndex(pParams, 3);
-	
+
 	Keyboard::methodName.setUTF16String(Param1.getUTF16StringPtr(), Param1.getUTF16Length());
 	Keyboard::methodId = PA_GetMethodID((PA_Unichar *)Param1.getUTF16StringPtr());
 	Keyboard::userProcessId = Param2.getIntValue();
-	
-	Keyboard::shouldFilterEvent = Param3.getIntValue();
-	
+
+	Keyboard::shouldFilterEvent = (Param3.getIntValue() != 0);
+
 	if(Param1.getUTF16Length())
 	{
 		Keyboard::startMonitoring();

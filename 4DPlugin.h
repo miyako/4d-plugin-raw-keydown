@@ -8,7 +8,10 @@
  #
  # --------------------------------------------------------------------------------*/
 
+#ifndef __4DPLUGIN_KEYBOARD_H__
+#define __4DPLUGIN_KEYBOARD_H__
 
+#include "4DPluginAPI.h"
 
 // --- Keyboard
 void ON_RAW_KEYDOWN_CALL(sLONG_PTR *pResult, PackagePtr pParams);
@@ -19,5 +22,5 @@ typedef PA_long32 method_id_t;
 typedef PA_Unichar* process_name_t;
 
 void listenerLoop(void);
-void listenerLoopFinish(void);
-void listenerLoopExecute(void);
+
+#endif
