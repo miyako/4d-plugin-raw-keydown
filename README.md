@@ -8,6 +8,82 @@ Captures raw key-down events and hands each one to a 4D method of your choice, e
 
 **Platforms:** macOS (Carbon event handler) and Windows 32/64-bit (low-level keyboard hook).
 
+## Versioning and manual publication
+
+**Bump version** is manual: select the branch in Actions and choose `patch`,
+`minor`, or `major`. It checks out the immutable selected commit, requires a
+clean checkout and an unchanged remote branch, validates the source metadata,
+then commits only these files:
+
+- `Keyboard Events.xcodeproj/project.pbxproj`
+- `Info.plist`
+- `English.lproj/InfoPlist.strings`
+
+The existing workflow header promised coordinated marketing/current versions.
+`MARKETING_VERSION` across the three project configurations and the source
+plist establish the existing `1.0.2` authority. This migration repairs the stale
+source `CURRENT_PROJECT_VERSION` (`1.0.0`) and localized strings (`1.0`) to that
+authority, without incrementing the release version. Future bumps require strict
+`X.Y.Z` agreement across both project keys and the localized version strings.
+Supported Xcode references (`$(MARKETING_VERSION)` / `${MARKETING_VERSION}` and
+their current-version counterparts where they resolve without a cycle) remain
+references. Absent `CFBundleVersion` stays absent. Prebuilt bundles, 4D project
+metadata, dependency versions, schema versions and localization counters are not
+release-version inputs and are not rewritten.
+
+The push is a non-force update to the explicitly selected branch, with both
+`push.followTags=false` and `--no-follow-tags`. A mandatory executable pre-push
+guard checks Git's advertised old SHA against the selected SHA, and checks the
+new commit, direct parent and target ref. It rejects late advances, ancestor
+rewinds, deletion and same-result races, including changes after the last
+`ls-remote`. Missing or non-executable guards fail closed. A bump creates no tag
+and does not start Build.
+
+**Build** is a separate manual workflow with no inputs. Select the branch after
+the bump; every checkout uses that run's `github.sha`, and the source metadata
+determines the release version. Windows x64 is built first, then macOS
+arm64/x86_64, with the Windows binary merged into the canonical bundle. Existing
+artifact checks, universal-binary verification, Developer ID signing and
+verification, ZIP/DMG notarization and DMG stapling remain mandatory.
+
+Publication is serialized repository-wide across branches without cancelling a
+running build. Before building and again immediately after all build/package/
+signing/notarization gates, it checks remote tags and the authenticated,
+paginated releases list, including drafts. API 404s, authentication/network
+errors, malformed pages or entries and failures on later pages are errors, not
+evidence of absence. Only a complete successful no-match permits creation.
+
+Publication creates `vX.Y.Z` at the exact selected SHA through a create-only
+Git refs POST and verifies the remote SHA. Even a concurrent same-SHA tag is a
+conflict. It then creates a new public, non-prerelease release with that tag,
+explicit SHA, tag-name title and an empty body (no generated notes), and uploads
+`Keyboard Events-X.Y.Z.zip` and `Keyboard Events-X.Y.Z.dmg` separately to the
+returned new release ID. Existing tags, drafts, releases and assets are never
+updated, overwritten or deleted.
+
+**Failure recovery:** the workflow stops without rollback or retry. A tag, a
+release or earlier uploaded assets may remain after a later failure, including
+an ambiguous API response. Inspect the retained state and logs manually; do not
+rerun the same version expecting an overwrite or cleanup. Resolve the incident
+under maintainer control, then use a new source version for a fresh publication.
+
+This migration does not modernize the legacy native project or bypass signing
+requirements. The Windows job retains its v143/Windows 10 overrides over the
+project's legacy SDK/toolset settings; macOS retains Carbon, AppKit,
+CoreGraphics, the vendored 4D Plugin API, universal architecture selection and
+the existing deployment-target override. Hosted-runner compatibility and signing
+credential availability remain separate operational concerns.
+
+Local checks (no native build, signing, dispatch or publication):
+
+```sh
+python3 -m unittest discover -s .github/tests -v
+actionlint .github/workflows/*.yml
+```
+
+The lifecycle suite uses live-derived source expectations, temporary source
+copies and local bare Git remotes for race tests; it does not publish remotely.
+
 ---
 
 ## Requirements & platform notes

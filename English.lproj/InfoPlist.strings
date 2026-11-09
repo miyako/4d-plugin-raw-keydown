@@ -1,1 +1,5 @@
-﻿/* Localized versions of Info.plist keys */CFBundleName = "Keyboard Events";CFBundleShortVersionString = "1.0";CFBundleGetInfoString = "Keyboard Events version 1.0, Copyright 2014 miyako.";
+﻿/* Localized versions of Info.plist keys */
+
+CFBundleName = "Keyboard Events";
+CFBundleShortVersionString = "1.0.2";
+CFBundleGetInfoString = "Keyboard Events version 1.0.2, Copyright 2014 miyako.";
