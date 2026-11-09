@@ -6,7 +6,8 @@
 # Run Build manually on the selected branch. The selected commit's source
 # metadata determines the version; publication is create-only after all gates.
 #
-# PORTABILITY: Edit only PRODUCT_NAME below. Everything else is derived.
+# PRODUCT_NAME determines the native layout; source paths and release asset
+# names are repository-specific in .github/scripts.
 # Canonical 4D layout is enforced:
 #   <Product>.4dbase/Plugins/<Product>.bundle/Contents/MacOS/<Product>
 #   <Product>.4dbase/Plugins/<Product>.bundle/Contents/Windows64/<Product>.4DX
