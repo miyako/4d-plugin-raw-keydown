@@ -263,14 +263,15 @@ namespace Keyboard
 			buf[1] = 0;
 			C_TEXT u;
 			u.setUTF8String((const uint8_t *)buf, 1);
-			params[1] = PA_CreateVariable(eVK_Unistring);
+			params[1] = PA_CreateVariable(eVK_Undefined);
 			PA_Unistring keycharStr = PA_CreateUnistring((PA_Unichar *)u.getUTF16StringPtr());
 			PA_SetStringVariable(&params[1], &keycharStr);
 
 			params[2] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[2], userProcessId);
 
-			PA_ExecuteMethodByID(methodId, params, 3);
+			PA_Variable returned = PA_ExecuteMethodByID(methodId, params, 3);
+			PA_ClearVariable(&returned);
 
 			PA_ClearVariable(&params[0]);
 			PA_ClearVariable(&params[1]);
@@ -280,7 +281,7 @@ namespace Keyboard
 		{
 			//EXECUTE METHOD ( methodName ; * ; $1 ; $2 ; $3 )
 			PA_Variable	params[5];
-			params[0] = PA_CreateVariable(eVK_Unistring);
+			params[0] = PA_CreateVariable(eVK_Undefined);
 			PA_Unistring _methodName = PA_CreateUnistring((PA_Unichar *)methodName.getUTF16StringPtr());
 			PA_SetStringVariable(&params[0], &_methodName);
 
@@ -294,14 +295,15 @@ namespace Keyboard
 			buf[1] = 0;
 			C_TEXT u;
 			u.setUTF8String((const uint8_t *)buf, 1);
-			params[3] = PA_CreateVariable(eVK_Unistring);//was never created: uninitialised variable
+			params[3] = PA_CreateVariable(eVK_Undefined);
 			PA_Unistring keycharStr = PA_CreateUnistring((PA_Unichar *)u.getUTF16StringPtr());
 			PA_SetStringVariable(&params[3], &keycharStr);
 
 			params[4] = PA_CreateVariable(eVK_Longint);
 			PA_SetLongintVariable(&params[4], userProcessId);
 
-			PA_ExecuteCommandByID(1007, params, 5);
+			PA_Variable returned = PA_ExecuteCommandByID(1007, params, 5);
+			PA_ClearVariable(&returned);
 
 			PA_ClearVariable(&params[0]);
 			//params[1] is an operation variable

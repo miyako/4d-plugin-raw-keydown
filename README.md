@@ -84,6 +84,74 @@ actionlint .github/workflows/*.yml
 The lifecycle suite uses live-derived source expectations, temporary source
 copies and local bare Git remotes for race tests; it does not publish remotely.
 
+## Native string ownership
+
+The ownership audit used source baseline
+`487e1bb1e718ea00670007f695b2dc458f54cb3b` and the bundled SDK implementation,
+not an inferred SDK release: `4DPluginAPI.h` labels itself `v13`, while
+`4DPluginAPI.c` labels itself `v14`. Guidance was checked against
+`miyako/skills` commit `e6b492fcb81e5e1a7f7db723594b420e63bf6eb9`
+(`4d-skills/skills/4dplugin/SKILL.md`, including merged changes 69 and 71).
+
+Both source and checked-in bundle manifests declare only the scalar command
+`ON RAW KEYDOWN CALL(&T;&L;&L)`. Dispatcher selector 1 configures the listener;
+its synthetic queue entries reach either method-ID or method-name callback
+execution. Startup does not install a hook. The native projects compile the
+SDK and all 16 class implementations: scalar numeric/date/time, text, blob,
+pointer, picture and seven array helpers. Only text/longint wrappers and the
+callback are used by the current command; picture, pointer, blob and array
+helpers are compiled but dormant from this dispatcher. No third-party library
+was modified, and prebuilt plugin binaries remain unchanged.
+
+The bundled contracts and corresponding corrections are:
+
+| Surface | Ownership contract and treatment |
+|---|---|
+| Callback arguments | `PA_CreateVariable(eVK_Unistring)` creates an owned empty string. `PA_SetStringVariable` shallow-assigns without clearing that owner. Transfer destinations now start Undefined, become text through the setter, and are cleared once after synchronous execution. Independent callback arguments still receive normal cleanup. |
+| Execution results | Both execution wrappers return a variable without clearing its payload. Discarded results are now explicitly cleared in both callback branches and all five picture-command branches, including independently owned text and copies of input text. |
+| Dormant picture helpers | The file-path string now has one variable owner, not explicit disposal followed by variable disposal. The wrapper retains the loaded picture before clearing the output argument. Immediately overwritten picture arguments start Undefined rather than leaking allocated empty pictures; borrowed picture arguments and returned picture handoffs remain detached before argument cleanup. |
+| Picture conversion | `PA_ConvertCharsetToCharset` takes capacities and returns lengths in **bytes**. `createCopy` converts the returned byte count to UTF-16 code units before constructing a string. |
+| Text arrays | Getters return borrowed descriptors. `ARRAY_TEXT` copies input content into C++ strings and allocates an independent string for each output slot. The SDK setter disposes the old element and shallow-transfers the new descriptor only for Unicode arrays with non-null data, a non-null input and indices `0..count`. Rejection leaves caller ownership. No blanket disposal removal or SDK implementation changes were needed. |
+| Scalar text wrappers | Parameter input is copied into C++ storage. Parameter/return output uses the SDK's engine-backed content setter, not the array descriptor-transfer setter. |
+
+On macOS, the native test compiles the **actual command implementation, every
+class implementation and complete unchanged SDK**, with a synthetic engine
+callback at `gCall4D`. It uses ASan/UBSan and explicit string/handle allocation
+and picture-reference accounting (LeakSanitizer is disabled on macOS). Its
+60 combinations cover both callback branches, loaded/copied pictures and
+array ownership, allocated/null empties, undefined/text results, independent
+and copied-input text results, and engine-error returns. Assertions check
+exact ASCII, BMP, supplementary and empty UTF-16 content, lengths and
+terminators; arrays additionally cover allocator churn, borrowed copies,
+independent transfers, replacement, shrink, clear and rejected type/index/
+null-data/null-input destinations. Callback key code, text, process number,
+queue consumption and the method-name `*` argument are preserved.
+
+```sh
+python3 .github/tests/test_native_ownership.py
+# Run the same harness against an extracted immutable source revision:
+NATIVE_SOURCE_ROOT=/absolute/path/to/source python3 .github/tests/test_native_ownership.py
+```
+
+The harness fails against the original baseline with callback leaks, path
+double disposal and an ASan heap-buffer-overflow in picture conversion, then
+passes with the fixes. **Native ownership** CI runs only this unsigned
+test executable; it never installs input hooks, captures user input, invokes
+the release workflow, packages, signs, notarizes or publishes binaries.
+
+**Deferred boundaries:** `C_POINTER::getVariable` uses the
+`PA_GetPointerValue` result as variable-definition metadata, despite the
+header's generic cleanup comment; its value/reference semantics need host
+evidence before adding disposal. Ownership of `PA_GetPictureData` format
+strings and `PA_GetApplicationFullPath` output is not documented by this
+bundled implementation, so no cleanup was guessed. No object/collection
+API or `PA_GetObjectProperty` surface exists in this SDK. Array allocation/
+resize failure is not certified: the SDK can update the element count even
+after failed growth. Picture-only paths outside the string/command helpers,
+real 4D process termination, Windows behavior and real-host execution remain
+outside these shim results; no Windows crash reproduction or 4D-host
+certification is claimed.
+
 ---
 
 ## Requirements & platform notes

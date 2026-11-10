@@ -1,0 +1,17 @@
+name: Native ownership
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native-ownership:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic native ownership regressions (no input hooks or release build)
+        run: python3 .github/tests/test_native_ownership.py
